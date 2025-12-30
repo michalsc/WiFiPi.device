@@ -2,6 +2,10 @@ cmake_minimum_required(VERSION 3.14.0)
 project(WiFiPi VERSION 0.3.2)
 get_verstring(VERSTRING)
 
+if(NOT TARGET devicetree)
+    add_subdirectory(devicetree.resource EXCLUDE_FROM_ALL)
+endif()
+
 add_link_options(-ffreestanding -nostdlib -nostartfiles -Wl,-e,__start)
 add_compile_options(-Os -m68040 -Wall -Wextra -Werror -fomit-frame-pointer)
 add_compile_definitions(PRIVATE VERSION_STRING="${VERSTRING}")
