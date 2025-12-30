@@ -121,6 +121,9 @@
 #define S2EVENT_CONNECT                 (1 << 9)
 #define S2EVENT_DISCONNECT              (1 << 10)
 
+/* NEW: Link state change events */
+#define S2EVENT_LINKUP                  (1 << 16)
+#define S2EVENT_LINKDOWN                (1 << 17)
 
 /* Structures */
 /* ========== */

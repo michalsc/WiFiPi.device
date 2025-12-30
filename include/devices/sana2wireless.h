@@ -34,6 +34,9 @@
 #define S2INFO_Band           (TAG_USER + 13)
 #define S2INFO_DefaultKeyNo   (TAG_USER + 14)
 
+/* NEW: Report changes of operational state */
+#define S2INFO_OperState      (TAG_USER + 20)
+
 /* Wireless Commands */
 
 #define S2_GETSIGNALQUALITY 0xc010
