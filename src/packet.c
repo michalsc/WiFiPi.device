@@ -627,6 +627,8 @@ void ProcessEvent(struct SDIO *sdio, struct PacketEvent *pe)
                 }
             }
             CopyMem(&pe->e_Address, unit->wu_JoinParams.ej_Assoc.ap_BSSID, 6);
+            unit->wu_Flags |= IFF_CONNECTED;
+            ReportEvents(unit, S2EVENT_CONNECT);
             break;
         
         case BRCMF_E_AUTH:
@@ -658,7 +660,7 @@ void ProcessEvent(struct SDIO *sdio, struct PacketEvent *pe)
             break;
         
         case BRCMF_E_REASSOC:
-            D(bug("[WiFi] E_DISASSOC\n"));
+            D(bug("[WiFi] E_REASSOC\n"));
             {
                 UBYTE *p = (APTR)pe;
                 for (ULONG i=0; i < sizeof(struct PacketEvent) + pe->e_DataLen; i++)
@@ -684,8 +686,6 @@ void ProcessEvent(struct SDIO *sdio, struct PacketEvent *pe)
             else
             {
                 D(bug("[WiFi] E_LINK up\n"));
-                unit->wu_Flags |= IFF_CONNECTED;
-                ReportEvents(unit, S2EVENT_CONNECT);
             }
             break;
 
