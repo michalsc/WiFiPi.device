@@ -171,12 +171,29 @@ struct MulticastRange {
     uint64_t        mr_UpperBound;
 };
 
+/* Statistics of one packet type, gathered while at least one opener tracks it (S2_TRACKTYPE) */
+struct TypeTracker
+{
+    struct MinNode              tt_Node;
+    ULONG                       tt_PacketType;
+    ULONG                       tt_UseCount;
+    struct Sana2PacketTypeStats tt_Stats;
+};
+
+/* A packet type tracked by one opener */
+struct TrackedType
+{
+    struct MinNode      tr_Node;
+    ULONG               tr_PacketType;
+};
+
 struct Opener
 {
     struct MinNode      o_Node;
     struct MsgPort      o_ReadPort;
     struct MsgPort      o_OrphanListeners;
     struct MsgPort      o_EventListeners;
+    struct MinList      o_TrackedTypes;
     struct Hook *       o_FilterHook;
     BOOL              (*o_RXFunc)(REGARG(APTR, "a0"), REGARG(APTR, "a1"), REGARG(ULONG, "d0"));
     BOOL              (*o_TXFunc)(REGARG(APTR, "a0"), REGARG(APTR, "a1"), REGARG(ULONG, "d0"));
@@ -281,5 +298,7 @@ void FreeVecPooled(APTR pool, APTR buf);
 void ProcessDataPacket(struct SDIO *, UBYTE *, ULONG);
 void ParseConfig(struct WiFiBase *WiFiBase);
 void ReportEvents(struct WiFiUnit *unit, ULONG eventSet);
+void CountTypeStats(struct WiFiUnit *unit, UWORD packetType, ULONG length, int sent);
+void UntrackAllTypes(struct WiFiUnit *unit, struct Opener *opener);
 
 #endif

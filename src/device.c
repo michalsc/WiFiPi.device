@@ -231,6 +231,8 @@ void WiFi_Open(REGARG(struct IOSana2Req * io, "a1"), REGARG(LONG unitNumber, "d0
         _NewList(&opener->o_EventListeners.mp_MsgList);
         opener->o_EventListeners.mp_Flags = PA_IGNORE;
 
+        _NewList(&opener->o_TrackedTypes);
+
         opener->o_RXFunc = (APTR)GetTagData(S2_CopyToBuff, (ULONG)opener->o_RXFunc, tags);
         opener->o_TXFunc = (APTR)GetTagData(S2_CopyFromBuff, (ULONG)opener->o_TXFunc, tags);
 /*
@@ -273,6 +275,8 @@ ULONG WiFi_Close(REGARG(struct IOSana2Req * io, "a1"))
 
         if (opener)
         {
+            UntrackAllTypes(u, opener);
+
             Disable();
             Remove((struct Node *)opener);
             Enable();

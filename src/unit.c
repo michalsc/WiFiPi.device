@@ -295,9 +295,9 @@ static const UWORD WiFi_SupportedCommands[] = {
     S2_DELMULTICASTADDRESS,
     S2_MULTICAST,
     S2_BROADCAST,
-    // S2_TRACKTYPE,
-    // S2_UNTRACKTYPE,
-    // S2_GETTYPESTATS,
+    S2_TRACKTYPE,
+    S2_UNTRACKTYPE,
+    S2_GETTYPESTATS,
 //    S2_GETSPECIALSTATS, <-- not used yet!
     S2_GETGLOBALSTATS,
     S2_ONEVENT,
@@ -1616,6 +1616,195 @@ static int Do_S2_OFFLINE(struct IOSana2Req *io)
     return 1;
 }
 
+/* All 802.3 frames (type field is a length, up to 1500) are tracked as one type */
+static ULONG TrackedTypeOf(ULONG packetType)
+{
+    return packetType <= 1500 ? 1500 : packetType;
+}
+
+/* Must be called with interrupts disabled */
+static struct TypeTracker *FindTypeTracker(struct WiFiUnit *unit, ULONG packetType)
+{
+    struct TypeTracker *tracker;
+
+    ForeachNode(&unit->wu_TypeTrackers, tracker)
+    {
+        if (tracker->tt_PacketType == packetType)
+            return tracker;
+    }
+
+    return NULL;
+}
+
+static struct TrackedType *FindTrackedType(struct Opener *opener, ULONG packetType)
+{
+    struct TrackedType *tracked;
+
+    ForeachNode(&opener->o_TrackedTypes, tracked)
+    {
+        if (tracked->tr_PacketType == packetType)
+            return tracked;
+    }
+
+    return NULL;
+}
+
+/* Count a packet sent or received in the statistics of its type, if anyone tracks it */
+void CountTypeStats(struct WiFiUnit *unit, UWORD packetType, ULONG length, int sent)
+{
+    struct WiFiBase *WiFiBase = unit->wu_Base;
+    struct ExecBase *SysBase = WiFiBase->w_SysBase;
+    struct TypeTracker *tracker;
+
+    Disable();
+    tracker = FindTypeTracker(unit, TrackedTypeOf(packetType));
+    if (tracker)
+    {
+        if (sent)
+        {
+            tracker->tt_Stats.PacketsSent++;
+            tracker->tt_Stats.BytesSent += length;
+        }
+        else
+        {
+            tracker->tt_Stats.PacketsReceived++;
+            tracker->tt_Stats.BytesReceived += length;
+        }
+    }
+    Enable();
+}
+
+/* One opener stops tracking a type; its statistics go away when nobody tracks it anymore */
+static void UntrackType(struct WiFiUnit *unit, struct TrackedType *tracked)
+{
+    struct WiFiBase *WiFiBase = unit->wu_Base;
+    struct ExecBase *SysBase = WiFiBase->w_SysBase;
+    struct TypeTracker *tracker;
+
+    Disable();
+    Remove((struct Node *)tracked);
+    tracker = FindTypeTracker(unit, tracked->tr_PacketType);
+    if (tracker && --tracker->tt_UseCount == 0)
+        Remove((struct Node *)tracker);
+    else
+        tracker = NULL;
+    Enable();
+
+    if (tracker)
+        FreeMem(tracker, sizeof(struct TypeTracker));
+    FreeMem(tracked, sizeof(struct TrackedType));
+}
+
+void UntrackAllTypes(struct WiFiUnit *unit, struct Opener *opener)
+{
+    struct TrackedType *tracked;
+
+    while ((tracked = (struct TrackedType *)opener->o_TrackedTypes.mlh_Head)->tr_Node.mln_Succ)
+    {
+        UntrackType(unit, tracked);
+    }
+}
+
+static int Do_S2_TRACKTYPE(struct IOSana2Req *io)
+{
+    struct WiFiUnit *unit = (struct WiFiUnit *)io->ios2_Req.io_Unit;
+    struct WiFiBase *WiFiBase = unit->wu_Base;
+    struct ExecBase *SysBase = WiFiBase->w_SysBase;
+    struct Opener *opener = io->ios2_BufferManagement;
+    ULONG packetType = TrackedTypeOf(io->ios2_PacketType);
+    struct TrackedType *tracked;
+    struct TypeTracker *tracker, *newTracker;
+
+    D(bug("[WiFi.0] S2_TRACKTYPE %04lx\n", packetType));
+
+    if (FindTrackedType(opener, packetType))
+    {
+        io->ios2_Req.io_Error = S2ERR_BAD_STATE;
+        io->ios2_WireError = S2WERR_ALREADY_TRACKED;
+        return 1;
+    }
+
+    tracked = AllocMem(sizeof(struct TrackedType), MEMF_PUBLIC | MEMF_CLEAR);
+    newTracker = AllocMem(sizeof(struct TypeTracker), MEMF_PUBLIC | MEMF_CLEAR);
+    if (tracked == NULL || newTracker == NULL)
+    {
+        if (tracked) FreeMem(tracked, sizeof(struct TrackedType));
+        if (newTracker) FreeMem(newTracker, sizeof(struct TypeTracker));
+        io->ios2_Req.io_Error = S2ERR_NO_RESOURCES;
+        io->ios2_WireError = S2WERR_GENERIC_ERROR;
+        return 1;
+    }
+
+    tracked->tr_PacketType = packetType;
+    newTracker->tt_PacketType = packetType;
+    newTracker->tt_UseCount = 1;
+
+    Disable();
+    tracker = FindTypeTracker(unit, packetType);
+    if (tracker)
+        tracker->tt_UseCount++;
+    else
+        AddTail((struct List *)&unit->wu_TypeTrackers, (struct Node *)newTracker);
+    AddTail((struct List *)&opener->o_TrackedTypes, (struct Node *)tracked);
+    Enable();
+
+    /* Somebody else tracks it already: keep counting there */
+    if (tracker)
+        FreeMem(newTracker, sizeof(struct TypeTracker));
+
+    io->ios2_Req.io_Error = 0;
+    return 1;
+}
+
+static int Do_S2_UNTRACKTYPE(struct IOSana2Req *io)
+{
+    struct WiFiUnit *unit = (struct WiFiUnit *)io->ios2_Req.io_Unit;
+    struct WiFiBase *WiFiBase = unit->wu_Base;
+    struct ExecBase *SysBase = WiFiBase->w_SysBase;
+    struct Opener *opener = io->ios2_BufferManagement;
+    struct TrackedType *tracked = FindTrackedType(opener, TrackedTypeOf(io->ios2_PacketType));
+
+    D(bug("[WiFi.0] S2_UNTRACKTYPE %04lx\n", io->ios2_PacketType));
+
+    if (tracked == NULL)
+    {
+        io->ios2_Req.io_Error = S2ERR_BAD_STATE;
+        io->ios2_WireError = S2WERR_NOT_TRACKED;
+        return 1;
+    }
+
+    UntrackType(unit, tracked);
+
+    io->ios2_Req.io_Error = 0;
+    return 1;
+}
+
+static int Do_S2_GETTYPESTATS(struct IOSana2Req *io)
+{
+    struct WiFiUnit *unit = (struct WiFiUnit *)io->ios2_Req.io_Unit;
+    struct WiFiBase *WiFiBase = unit->wu_Base;
+    struct ExecBase *SysBase = WiFiBase->w_SysBase;
+    struct TypeTracker *tracker;
+
+    D(bug("[WiFi.0] S2_GETTYPESTATS %04lx\n", io->ios2_PacketType));
+
+    Disable();
+    tracker = FindTypeTracker(unit, TrackedTypeOf(io->ios2_PacketType));
+    if (tracker)
+        CopyMem(&tracker->tt_Stats, io->ios2_StatData, sizeof(struct Sana2PacketTypeStats));
+    Enable();
+
+    if (tracker == NULL)
+    {
+        io->ios2_Req.io_Error = S2ERR_BAD_STATE;
+        io->ios2_WireError = S2WERR_NOT_TRACKED;
+        return 1;
+    }
+
+    io->ios2_Req.io_Error = 0;
+    return 1;
+}
+
 void HandleRequest(struct IOSana2Req *io)
 {
     struct WiFiUnit *unit = (struct WiFiUnit *)io->ios2_Req.io_Unit;
@@ -1661,6 +1850,18 @@ void HandleRequest(struct IOSana2Req *io)
                 CopyMem(&unit->wu_Stats, io->ios2_StatData, sizeof(struct Sana2DeviceStats));
                 io->ios2_Req.io_Error = 0;
                 complete = 1;
+                break;
+
+            case S2_TRACKTYPE:
+                complete = Do_S2_TRACKTYPE(io);
+                break;
+
+            case S2_UNTRACKTYPE:
+                complete = Do_S2_UNTRACKTYPE(io);
+                break;
+
+            case S2_GETTYPESTATS:
+                complete = Do_S2_GETTYPESTATS(io);
                 break;
 
             case S2_GETNETWORKS:

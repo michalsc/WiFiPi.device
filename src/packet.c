@@ -1262,6 +1262,7 @@ void ProcessDataPacket(struct SDIO *sdio, UBYTE *packet, ULONG packetLength)
         struct Opener *opener;
 
         unit->wu_Stats.PacketsReceived++;
+        CountTypeStats(unit, packetType, packetLength, FALSE);
 
         Disable();
         /* Go through all openers */
@@ -1419,6 +1420,16 @@ int SendGlomDataPacket(struct SDIO *sdio, struct IOSana2Req **ioList, UBYTE coun
             D(bug("[WiFi] Sending Frame without data, packet type %04lx\n", io->ios2_PacketType));
         }
 
+        {
+            // The whole ethernet frame, header included, in the statistics of its type
+            UBYTE *frame = (UBYTE *)hdr + sizeof(struct PacketHeaderSW) + 4;
+            ULONG frameLength = io->ios2_DataLength;
+            if ((io->ios2_Req.io_Flags & SANA2IOF_RAW) == 0)
+                frameLength += 14;
+            if (frameLength >= 14)
+                CountTypeStats(unit, *(UWORD*)&frame[12], frameLength, TRUE);
+        }
+
 #if 1
         if (io->ios2_PacketType == 0x888e)
         {
@@ -1528,6 +1539,16 @@ int SendDataPacket(struct SDIO *sdio, struct IOSana2Req *io)
         D(bug("[WiFi] Sending non-glom Frame without data, packet type %04lx\n", io->ios2_PacketType));
     }
     //PacketDump(sdio, p, "WiFi.OUT");
+
+    {
+        // The whole ethernet frame, header included, in the statistics of its type
+        UBYTE *frame = (UBYTE *)p + p->c_DataOffset + 4;
+        ULONG frameLength = io->ios2_DataLength;
+        if ((io->ios2_Req.io_Flags & SANA2IOF_RAW) == 0)
+            frameLength += 14;
+        if (frameLength >= 14)
+            CountTypeStats(unit, *(UWORD*)&frame[12], frameLength, TRUE);
+    }
 
     sdio->SendPKT((UBYTE*)p, totLen, sdio);
     unit->wu_Stats.PacketsSent++;
