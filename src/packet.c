@@ -2476,6 +2476,11 @@ void StartPacketReceiver(struct SDIO *sdio)
     PacketCmdInt(sdio, BRCMF_C_SET_SCAN_UNASSOC_TIME, 40);
     PacketCmdInt(sdio, BRCMF_C_SET_SCAN_PASSIVE_TIME, 120);
 
+    /* No firmware roaming and no 802.11v BSS transition (band steering): the
+       external supplicant (WirelessManager) must stay on the BSS it chose,
+       otherwise the 4-way handshake is done against a different BSSID. */
+    PacketSetVarInt(sdio, "roam_off", 1);
+    PacketSetVarInt(sdio, "wnm", 0);
     PacketCmdInt(sdio, BRCMF_C_UP, 0);
 
     char ver[128];

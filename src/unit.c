@@ -550,6 +550,19 @@ static int Do_S2_SETKEY(struct IOSana2Req *io)
         /* Copy key itself */
         CopyMem(io->ios2_Data, key.k_Data, io->ios2_DataLength);
 
+        /*
+            TKIP: firmware expects RX/TX MIC keys swapped compared to the
+            802.11 key layout (TK | TX MIC | RX MIC). Same as Linux brcmfmac
+            does in station mode.
+        */
+        if (io->ios2_PacketType == S2ENC_TKIP && io->ios2_DataLength == 32)
+        {
+            UBYTE tmp[8];
+            CopyMem(&key.k_Data[24], tmp, 8);
+            CopyMem(&key.k_Data[16], &key.k_Data[24], 8);
+            CopyMem(tmp, &key.k_Data[16], 8);
+        }
+
         /* Key idx 0 is GTK, it needs AP's BSSID and flags zeroed */
         if (io->ios2_WireError == 0)
         {
@@ -592,7 +605,11 @@ static int Do_S2_SETKEY(struct IOSana2Req *io)
         PacketGetVar(WiFiBase->w_SDIO, "wsec", &wsec_orig, sizeof(ULONG));
         wsec_orig = LE32(wsec_orig);
         D(bug("[WiFi.0] Orig wsec: %08lx\n", wsec_orig));
-        wsec_orig &= ~(TKIP_ENABLED | WEP_ENABLED | AES_ENABLED);
+        /*
+            Keep cipher bits of other keys. In mixed WPA/WPA2 networks the
+            pairwise key is CCMP while group key is TKIP - both must stay
+            enabled, otherwise either unicast or broadcast traffic is lost.
+        */
         wsec |= wsec_orig;
         D(bug("[WiFi.0] New wsec: %08lx\n", wsec));
         PacketSetVarInt(WiFiBase->w_SDIO, "wsec", wsec);
@@ -1508,6 +1525,11 @@ static int Do_S2_CONFIGINTERFACE(struct IOSana2Req *io)
         PacketCmdInt(sdio, BRCMF_C_SET_SCAN_UNASSOC_TIME, 40);
         PacketCmdInt(sdio, BRCMF_C_SET_SCAN_PASSIVE_TIME, 120);
 
+        /* No firmware roaming and no 802.11v BSS transition (band steering): the
+           external supplicant (WirelessManager) must stay on the BSS it chose,
+           otherwise the 4-way handshake is done against a different BSSID. */
+        PacketSetVarInt(sdio, "roam_off", 1);
+        PacketSetVarInt(sdio, "wnm", 0);
         PacketCmdInt(sdio, BRCMF_C_UP, 0);
 
         char ver[128];
